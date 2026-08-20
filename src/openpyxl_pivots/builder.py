@@ -105,6 +105,15 @@ def add_pivot_table(
     headers, records = _read_source(source_info)
     field_index = {header: idx for idx, header in enumerate(headers)}
 
+    field_arguments = {"row": row, "value": value}
+    if column is not None:
+        field_arguments["column"] = column
+    for argument, field in field_arguments.items():
+        if not isinstance(field, str):
+            raise PivotBuildError(
+                f"{argument} must be a single source field name, got {type(field).__name__}"
+            )
+
     requested = [row, value] + ([column] if column else [])
     missing = [field for field in requested if field not in field_index]
     if missing:
@@ -415,7 +424,11 @@ def _build_field_cache(values: list[Any], *, categorical: bool) -> _FieldCache:
                 if value is not None
             ),
             containsNumber=bool(numeric),
-            containsSemiMixedTypes=len(types) > 1,
+            # Office requires this for text, blank, boolean, or error items.
+            # openpyxl exposes Excel error values as strings here.
+            containsSemiMixedTypes=any(
+                value is None or isinstance(value, (str, bool)) for value in unique
+            ),
             containsString=any(isinstance(value, str) for value in unique),
             minValue=min(numeric) if numeric else None,
             maxValue=max(numeric) if numeric else None,

@@ -2,6 +2,14 @@
 
 All notable changes to this project are documented here.
 
+## 0.2.1 - 2026-08-21
+
+- Mark text-or-blank shared-item caches as semi-mixed so Microsoft Excel can
+  open PivotTables whose row or column field contains blank values.
+- Raise a descriptive `PivotBuildError` when `row`, `column`, or `value` is not
+  a single field name instead of leaking an internal unhashable-type error.
+- Add regression coverage for blank categorical axis values.
+
 ## 0.2.0 - 2026-08-20
 
 - Correct the PivotTable location for Excel's two-header-row layout.

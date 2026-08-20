@@ -2,6 +2,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
 from zipfile import ZipFile
+from xml.etree import ElementTree
 
 from openpyxl import Workbook, load_workbook
 
@@ -111,6 +112,63 @@ class BuilderTests(unittest.TestCase):
                 row="Year",
                 value="Region",
                 aggregation="sum",
+            )
+
+    def test_text_axis_with_blank_emits_excel_compatible_shared_items(self):
+        wb = Workbook()
+        data = wb.active
+        data.title = "Data"
+        data.append(["region", "year", "revenue"])
+        data.append(["North", 2025, 120])
+        data.append([None, 2025, 80])
+        data.append(["North", 2026, 150])
+
+        target = wb.create_sheet("Pivot")
+        add_pivot_table(
+            target,
+            source="Data!A1:C4",
+            destination="A3",
+            name="BlankAxisPivot",
+            row="region",
+            column="year",
+            value="revenue",
+        )
+
+        with TemporaryDirectory() as directory:
+            output = Path(directory) / "blank-in-row-field.xlsx"
+            wb.save(output)
+            with ZipFile(output) as archive:
+                root = ElementTree.fromstring(
+                    archive.read("xl/pivotCache/pivotCacheDefinition1.xml")
+                )
+                namespace = {"x": "http://schemas.openxmlformats.org/spreadsheetml/2006/main"}
+                shared_items = root.find(
+                    "x:cacheFields/x:cacheField[@name='region']/x:sharedItems",
+                    namespace,
+                )
+                self.assertIsNotNone(shared_items)
+                self.assertEqual(shared_items.get("containsBlank"), "1")
+                self.assertEqual(shared_items.get("containsString"), "1")
+                self.assertEqual(shared_items.get("containsSemiMixedTypes"), "1")
+
+            pivot = load_workbook(output)["Pivot"]._pivots[0]
+            self.assertEqual(pivot.name, "BlankAxisPivot")
+
+    def test_rejects_multiple_value_fields_explicitly(self):
+        wb = make_workbook()
+        target = wb.create_sheet("Pivot")
+        with self.assertRaisesRegex(
+            PivotBuildError,
+            "value must be a single source field name",
+        ):
+            add_pivot_table(
+                target,
+                source="Data!A1:C5",
+                destination="A1",
+                name="MultipleValues",
+                row="Region",
+                column="Year",
+                value=["Revenue", "Year"],
             )
 
 
