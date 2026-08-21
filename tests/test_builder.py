@@ -68,10 +68,18 @@ class BuilderTests(unittest.TestCase):
                     b'name="SalesPivot" cacheId="1"',
                     archive.read("xl/pivotTables/pivotTable1.xml"),
                 )
-                self.assertIn(
-                    b'<i t="data" r="0" i="0"><x/></i>',
-                    archive.read("xl/pivotTables/pivotTable1.xml"),
+                pivot_root = ElementTree.fromstring(
+                    archive.read("xl/pivotTables/pivotTable1.xml")
                 )
+                namespace = {
+                    "x": "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+                }
+                first_row_item = pivot_root.find("x:rowItems/x:i", namespace)
+                self.assertIsNotNone(first_row_item)
+                self.assertEqual(first_row_item.get("t"), "data")
+                first_row_index = first_row_item.find("x:x", namespace)
+                self.assertIsNotNone(first_row_index)
+                self.assertIsNone(first_row_index.get("v"))
                 cache_xml = archive.read("xl/pivotCache/pivotCacheDefinition1.xml")
                 self.assertNotIn(b'saveData=', cache_xml)
                 self.assertIn(b'<cacheField name="Region" numFmtId="0">', cache_xml)
