@@ -403,7 +403,7 @@ def _build_field_cache(values: list[Any], *, categorical: bool) -> _FieldCache:
             minValue=min(numeric) if numeric else None,
             maxValue=max(numeric) if numeric else None,
         )
-    elif dates and len(types) == 1:
+    elif dates and len(types) == 1 and not any(value is None for value in unique):
         shared_kwargs.update(
             containsDate=True,
             containsNonDate=False,
@@ -429,7 +429,7 @@ def _build_field_cache(values: list[Any], *, categorical: bool) -> _FieldCache:
             containsSemiMixedTypes=any(
                 value is None or isinstance(value, (str, bool)) for value in unique
             ),
-            containsString=any(isinstance(value, str) for value in unique),
+            containsString=any(isinstance(value, (str, bool)) for value in unique),
             minValue=min(numeric) if numeric else None,
             maxValue=max(numeric) if numeric else None,
             minDate=min(dates) if dates else None,

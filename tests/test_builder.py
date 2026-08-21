@@ -1,3 +1,4 @@
+from datetime import date
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
@@ -153,6 +154,80 @@ class BuilderTests(unittest.TestCase):
 
             pivot = load_workbook(output)["Pivot"]._pivots[0]
             self.assertEqual(pivot.name, "BlankAxisPivot")
+
+    def test_date_axis_with_blank_emits_both_required_flags(self):
+        wb = Workbook()
+        data = wb.active
+        data.title = "Data"
+        data.append(["day", "region", "revenue"])
+        data.append([date(2025, 1, 1), "North", 120])
+        data.append([None, "South", 80])
+        data.append([date(2025, 1, 2), "North", 150])
+
+        target = wb.create_sheet("Pivot")
+        add_pivot_table(
+            target,
+            source="Data!A1:C4",
+            destination="A3",
+            name="BlankDatePivot",
+            row="day",
+            column="region",
+            value="revenue",
+        )
+
+        with TemporaryDirectory() as directory:
+            output = Path(directory) / "blank-in-date-field.xlsx"
+            wb.save(output)
+            with ZipFile(output) as archive:
+                root = ElementTree.fromstring(
+                    archive.read("xl/pivotCache/pivotCacheDefinition1.xml")
+                )
+                namespace = {"x": "http://schemas.openxmlformats.org/spreadsheetml/2006/main"}
+                shared_items = root.find(
+                    "x:cacheFields/x:cacheField[@name='day']/x:sharedItems",
+                    namespace,
+                )
+                self.assertIsNotNone(shared_items)
+                self.assertEqual(shared_items.get("containsBlank"), "1")
+                self.assertEqual(shared_items.get("containsDate"), "1")
+                self.assertEqual(shared_items.get("containsSemiMixedTypes"), "1")
+
+    def test_boolean_axis_with_blank_marks_items_as_strings(self):
+        wb = Workbook()
+        data = wb.active
+        data.title = "Data"
+        data.append(["active", "region", "revenue"])
+        data.append([True, "North", 120])
+        data.append([None, "South", 80])
+        data.append([False, "North", 150])
+
+        target = wb.create_sheet("Pivot")
+        add_pivot_table(
+            target,
+            source="Data!A1:C4",
+            destination="A3",
+            name="BlankBooleanPivot",
+            row="active",
+            column="region",
+            value="revenue",
+        )
+
+        with TemporaryDirectory() as directory:
+            output = Path(directory) / "blank-in-boolean-field.xlsx"
+            wb.save(output)
+            with ZipFile(output) as archive:
+                root = ElementTree.fromstring(
+                    archive.read("xl/pivotCache/pivotCacheDefinition1.xml")
+                )
+                namespace = {"x": "http://schemas.openxmlformats.org/spreadsheetml/2006/main"}
+                shared_items = root.find(
+                    "x:cacheFields/x:cacheField[@name='active']/x:sharedItems",
+                    namespace,
+                )
+                self.assertIsNotNone(shared_items)
+                self.assertEqual(shared_items.get("containsBlank"), "1")
+                self.assertEqual(shared_items.get("containsSemiMixedTypes"), "1")
+                self.assertEqual(shared_items.get("containsString"), "1")
 
     def test_rejects_multiple_value_fields_explicitly(self):
         wb = make_workbook()

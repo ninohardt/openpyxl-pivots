@@ -1,0 +1,39 @@
+name: Generated workbook problem
+description: Report an Excel warning, incorrect PivotTable, or invalid package.
+title: "[bug] "
+labels: ["bug"]
+body:
+  - type: textarea
+    attributes:
+      label: Minimal Python example
+      description: Remove confidential or personal data before posting.
+      render: python
+    validations:
+      required: true
+  - type: input
+    attributes:
+      label: openpyxl-pivots version
+    validations:
+      required: true
+  - type: input
+    attributes:
+      label: openpyxl version
+    validations:
+      required: true
+  - type: input
+    attributes:
+      label: Spreadsheet application and version
+      placeholder: Microsoft Excel for Microsoft 365, Version ...
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: Observed behavior
+      description: Include the complete Excel recovery-log text when applicable.
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true

@@ -3,7 +3,7 @@
 from .builder import PivotBuildError, add_pivot_table
 
 __all__ = ["PivotBuildError", "add_pivot_table", "install"]
-__version__ = "0.2.1"
+__version__ = "0.2.2"
 
 
 def install():
