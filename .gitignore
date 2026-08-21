@@ -1,0 +1,14 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.coverage
+.pytest_cache/
+.tox/
+.venv/
+build/
+dist/
+outputs/
+upload/
+spreadsheet_qa.mjs
+*.xlsx
+*.zip

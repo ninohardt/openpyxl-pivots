@@ -94,13 +94,14 @@ pivot_sheet.add_pivot_table(
 
 ## Validation status
 
-Version 0.2.1 is covered by package-level tests, structurally round-tripped by
+Version 0.2.2 is covered by package-level tests, structurally round-tripped by
 openpyxl, smoke-tested with LibreOffice, and manually opened successfully in
 desktop Microsoft Excel without a repair warning. The XML now matches the
 two-header-row geometry, positive cache identifiers, and axis-item encoding
-observed in an Excel-normalized workbook. Text axis fields containing blanks
-are emitted with Excel-compatible shared-item flags; this was validated both on
-a minimal reproducer and on a 35,380-row workbook in desktop Excel on Windows.
+observed in an Excel-normalized workbook. Text, date, and boolean axis fields
+containing blanks are emitted with Excel-compatible shared-item flags. This was
+validated across 14 field shapes and on a 35,380-row workbook in desktop Excel
+on Windows.
 
 This validation is evidence for the supported example, not a general Excel
 compatibility guarantee. Broader field combinations, data types, and Excel

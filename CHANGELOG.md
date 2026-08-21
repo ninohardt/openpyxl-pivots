@@ -2,6 +2,14 @@
 
 All notable changes to this project are documented here.
 
+## 0.2.2 - 2026-08-21
+
+- Route date fields containing blanks through the mixed-item cache path so the
+  generated cache declares both `containsBlank` and `containsSemiMixedTypes`.
+- Mark boolean shared items as strings, matching the attributes Microsoft Excel
+  requires when a boolean field also contains blanks.
+- Add regression coverage for date-plus-blank and boolean-plus-blank axis fields.
+
 ## 0.2.1 - 2026-08-21
 
 - Mark text-or-blank shared-item caches as semi-mixed so Microsoft Excel can
