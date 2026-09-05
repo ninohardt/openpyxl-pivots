@@ -11,6 +11,7 @@ from __future__ import annotations
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import date, datetime
+from math import isfinite
 from numbers import Real
 from typing import Any, Iterable
 
@@ -41,6 +42,7 @@ from openpyxl.pivot.table import (
     TableDefinition,
 )
 from openpyxl.styles import Font, PatternFill
+from openpyxl.worksheet.worksheet import Worksheet
 from openpyxl.utils.cell import (
     get_column_letter,
     range_boundaries,
@@ -96,25 +98,32 @@ def add_pivot_table(
     ``source`` may be ``"Data!A1:D100"``, ``"A1:D100"`` (same worksheet), or
     ``(source_worksheet, "A1:D100")``.
     """
-    if aggregation not in _AGGREGATION_LABELS:
+    if not isinstance(worksheet, Worksheet):
+        raise PivotBuildError("target must be a normal, writable worksheet")
+    if not isinstance(aggregation, str) or aggregation not in _AGGREGATION_LABELS:
         allowed = ", ".join(_AGGREGATION_LABELS)
         raise PivotBuildError(f"aggregation must be one of: {allowed}")
 
     wb = worksheet.parent
-    source_info = _resolve_source(worksheet, source)
-    headers, records = _read_source(source_info)
-    field_index = {header: idx for idx, header in enumerate(headers)}
-
     field_arguments = {"row": row, "value": value}
     if column is not None:
         field_arguments["column"] = column
     for argument, field in field_arguments.items():
-        if not isinstance(field, str):
+        if not isinstance(field, str) or not field:
             raise PivotBuildError(
                 f"{argument} must be a single source field name, got {type(field).__name__}"
             )
 
-    requested = [row, value] + ([column] if column else [])
+    if not isinstance(style, str) or not style:
+        raise PivotBuildError("style must be a non-empty string")
+    if not isinstance(refresh_on_load, bool):
+        raise PivotBuildError("refresh_on_load must be a boolean")
+    _validate_name(wb, name)
+    _destination_cell(destination)
+    source_info = _resolve_source(worksheet, source)
+    headers, records = _read_source(source_info)
+    field_index = {header: idx for idx, header in enumerate(headers)}
+    requested = [row, value] + ([column] if column is not None else [])
     missing = [field for field in requested if field not in field_index]
     if missing:
         raise PivotBuildError(f"unknown source field(s): {', '.join(missing)}")
@@ -122,7 +131,6 @@ def add_pivot_table(
         raise PivotBuildError("row, column, and value fields must be different in this MVP")
     if not records:
         raise PivotBuildError("the source range has headers but no data rows")
-    _validate_name(wb, name)
 
     row_idx = field_index[row]
     value_idx = field_index[value]
@@ -151,6 +159,10 @@ def add_pivot_table(
     cache_id = _next_cache_id(wb)
     cache = CacheDefinition(
         saveData=None,
+        # openpyxl deduplicates caches by serialized definition equality, but
+        # does not repair the referencing cacheIds. Persist per-pivot builder
+        # provenance so independent caches stay distinct after save/load/save.
+        refreshedBy=f"openpyxl-pivots ({name})",
         refreshOnLoad=refresh_on_load,
         enableRefresh=None,
         createdVersion=3,
@@ -170,6 +182,13 @@ def add_pivot_table(
 
     row_keys = _ordered_unique(record[row_idx] for record in records)
     col_keys = _ordered_unique(record[col_idx] for record in records) if column else []
+    if worksheet is source_info.worksheet:
+        left, top = _destination_cell(destination)
+        right = left + (len(col_keys) + 2 if column else 2) - 1
+        bottom = top + len(row_keys) + (3 if column else 2) - 1
+        if not (right < source_info.min_col or left > source_info.max_col
+                or bottom < source_info.min_row or top > source_info.max_row):
+            raise PivotBuildError("PivotTable output must not overlap its source range")
     result_ref = _render_result(
         worksheet,
         destination,
@@ -281,7 +300,10 @@ def _resolve_source(target_ws, source) -> _Source:
     elif isinstance(source, str):
         if "!" in source:
             sheet_token, ref = source.rsplit("!", 1)
-            sheet_name = sheet_token.strip("'").replace("''", "'")
+            if sheet_token.startswith("'") and sheet_token.endswith("'"):
+                sheet_name = sheet_token[1:-1].replace("''", "'")
+            else:
+                sheet_name = sheet_token
             try:
                 source_ws = target_ws.parent[sheet_name]
             except KeyError as exc:
@@ -291,6 +313,10 @@ def _resolve_source(target_ws, source) -> _Source:
     else:
         raise PivotBuildError("source must be a range string or (worksheet, range)")
 
+    if not isinstance(source_ws, Worksheet) or source_ws.parent is not target_ws.parent:
+        raise PivotBuildError("source worksheet must belong to the same workbook as the target")
+    if not isinstance(ref, str):
+        raise PivotBuildError("source range must be a string")
     ref = ref.replace("$", "")
     try:
         min_col, min_row, max_col, max_row = range_boundaries(ref)
@@ -298,6 +324,8 @@ def _resolve_source(target_ws, source) -> _Source:
         raise PivotBuildError(f"invalid source range: {ref}") from exc
     if None in (min_col, min_row, max_col, max_row):
         raise PivotBuildError("source must be a bounded rectangular range")
+    if not (1 <= min_col <= max_col <= 16384 and 1 <= min_row <= max_row <= 1048576):
+        raise PivotBuildError("source range must be ordered and within Excel worksheet limits")
     return _Source(source_ws, ref, min_col, min_row, max_col, max_row)
 
 
@@ -308,18 +336,34 @@ def _read_source(source: _Source) -> tuple[list[str], list[list[Any]]]:
             max_row=source.max_row,
             min_col=source.min_col,
             max_col=source.max_col,
-            values_only=True,
+            values_only=False,
         )
     )
     if not rows:
         raise PivotBuildError("source range is empty")
-    raw_headers = rows[0]
+    raw_headers = [cell.value for cell in rows[0]]
     if any(value is None or str(value).strip() == "" for value in raw_headers):
         raise PivotBuildError("every source column must have a non-empty header")
     headers = [str(value) for value in raw_headers]
     if len(set(headers)) != len(headers):
         raise PivotBuildError("source headers must be unique")
-    return headers, [list(row) for row in rows[1:]]
+    records = []
+    for cells in rows[1:]:
+        record = []
+        for cell in cells:
+            value = cell.value
+            location = f"{source.worksheet.title}!{cell.coordinate}"
+            if cell.data_type in {"f", "e"}:
+                raise PivotBuildError(f"formulas and Excel errors are unsupported in source cell {location}; use literal or cached values")
+            if _is_number(value) and not isfinite(value):
+                raise PivotBuildError(f"source cell {location} must contain a finite number")
+            if isinstance(value, datetime) and value.tzinfo is not None:
+                raise PivotBuildError(f"source cell {location} must contain a timezone-naive datetime")
+            if value is not None and not isinstance(value, (str, bool, date)) and not _is_number(value):
+                raise PivotBuildError(f"unsupported source value type in {location}: {type(value).__name__}")
+            record.append(value)
+        records.append(record)
+    return headers, records
 
 
 def _validate_name(workbook, name: str) -> None:
@@ -353,19 +397,27 @@ def _is_number(value: Any) -> bool:
 
 
 def _ordered_unique(values: Iterable[Any]) -> list[Any]:
-    result = []
+    result = {}
     for value in values:
-        if not any(_same_key(value, existing) for existing in result):
-            result.append(value)
-    return result
+        result.setdefault(_cache_key(value), value)
+    return list(result.values())
 
 
-def _same_key(left: Any, right: Any) -> bool:
-    if _is_number(left) and _is_number(right):
-        return float(left) == float(right)
-    if isinstance(left, (date, datetime)) and isinstance(right, (date, datetime)):
-        return _as_datetime(left) == _as_datetime(right)
-    return type(left) is type(right) and left == right
+def _cache_key(value: Any) -> tuple:
+    """Use the same OOXML identity for cache indices and displayed groups.
+
+    Numbers share one category, as do dates and datetimes. Booleans remain
+    distinct from numbers even though Python considers True == 1.
+    """
+    if value is None:
+        return ("m", None)
+    if isinstance(value, bool):
+        return ("b", value)
+    if _is_number(value):
+        return ("n", float(value))
+    if isinstance(value, (date, datetime)):
+        return ("d", _as_datetime(value))
+    return ("s", value)
 
 
 def _build_field_cache(values: list[Any], *, categorical: bool) -> _FieldCache:
@@ -386,15 +438,17 @@ def _build_field_cache(values: list[Any], *, categorical: bool) -> _FieldCache:
 
     unique = _ordered_unique(values)
     fields = [_pivot_value(value) for value in unique]
-    indices = tuple(_index_of(unique, value) for value in values)
-    types = {type(value) for value in unique if value is not None}
+    lookup = {_cache_key(value): idx for idx, value in enumerate(unique)}
+    indices = tuple(lookup[_cache_key(value)] for value in values)
+    types = {_cache_key(value)[0] for value in unique if value is not None}
+    has_blank = any(value is None for value in unique)
     numeric = [float(value) for value in unique if _is_number(value)]
     dates = [_as_datetime(value) for value in unique if isinstance(value, (date, datetime))]
     shared_kwargs = {"_fields": fields}
     # Excel emits no redundant type flags for a pure string cache. For numeric
     # caches it emits only the numeric characteristics below. Keeping the XML
     # close to Excel's own output avoids a cache-repair pass on open.
-    if types and all(issubclass(item_type, Real) and item_type is not bool for item_type in types):
+    if types == {"n"} and not has_blank:
         shared_kwargs.update(
             containsInteger=bool(numeric) and all(number.is_integer() for number in numeric),
             containsNumber=True,
@@ -403,7 +457,7 @@ def _build_field_cache(values: list[Any], *, categorical: bool) -> _FieldCache:
             minValue=min(numeric) if numeric else None,
             maxValue=max(numeric) if numeric else None,
         )
-    elif dates and len(types) == 1 and not any(value is None for value in unique):
+    elif types == {"d"} and not has_blank:
         shared_kwargs.update(
             containsDate=True,
             containsNonDate=False,
@@ -412,9 +466,9 @@ def _build_field_cache(values: list[Any], *, categorical: bool) -> _FieldCache:
             minDate=min(dates),
             maxDate=max(dates),
         )
-    elif len(types) > 1 or any(value is None for value in unique):
+    elif len(types) > 1 or has_blank:
         shared_kwargs.update(
-            containsBlank=any(value is None for value in unique),
+            containsBlank=has_blank,
             containsDate=bool(dates),
             containsInteger=bool(numeric) and all(number.is_integer() for number in numeric),
             containsMixedTypes=len(types) > 1,
@@ -425,24 +479,19 @@ def _build_field_cache(values: list[Any], *, categorical: bool) -> _FieldCache:
             ),
             containsNumber=bool(numeric),
             # Office requires this for text, blank, boolean, or error items.
-            # openpyxl exposes Excel error values as strings here.
             containsSemiMixedTypes=any(
                 value is None or isinstance(value, (str, bool)) for value in unique
             ),
             containsString=any(isinstance(value, (str, bool)) for value in unique),
-            minValue=min(numeric) if numeric else None,
-            maxValue=max(numeric) if numeric else None,
-            minDate=min(dates) if dates else None,
-            maxDate=max(dates) if dates else None,
+            # OOXML date bounds must not be mixed with numeric bounds.
+            minValue=min(numeric) if numeric and not dates else None,
+            maxValue=max(numeric) if numeric and not dates else None,
+            minDate=min(dates) if dates and not numeric else None,
+            maxDate=max(dates) if dates and not numeric else None,
         )
+    if any(isinstance(value, str) and len(value) > 255 for value in unique):
+        shared_kwargs["longText"] = True
     return _FieldCache(SharedItems(**shared_kwargs), indices)
-
-
-def _index_of(values: list[Any], needle: Any) -> int:
-    for idx, value in enumerate(values):
-        if _same_key(value, needle):
-            return idx
-    raise AssertionError("value disappeared from its own cache")
 
 
 def _pivot_value(value: Any):
@@ -505,7 +554,8 @@ def _key_indices(field_cache: _FieldCache, keys: list[Any]) -> list[int]:
     if field_cache.indices is None:
         raise AssertionError("axis field did not receive a shared-item cache")
     values = [_value_from_pivot(item) for item in field_cache.shared_items._fields]
-    return [_index_of(values, key) for key in keys]
+    lookup = {_cache_key(value): idx for idx, value in enumerate(values)}
+    return [lookup[_cache_key(key)] for key in keys]
 
 
 def _value_from_pivot(item):
@@ -560,17 +610,15 @@ def _render_result(
     row_keys,
     col_keys,
 ):
-    try:
-        min_col, min_row, max_col, max_row = range_boundaries(destination.replace("$", ""))
-    except ValueError as exc:
-        raise PivotBuildError(f"invalid destination: {destination}") from exc
-    if (min_col, min_row) != (max_col, max_row):
-        raise PivotBuildError("destination must be a single cell")
+    min_col, min_row = _destination_cell(destination)
 
     groups = defaultdict(list)
+    column_values = defaultdict(list)
     for record in records:
         key = (record[row_idx], record[col_idx] if col_idx is not None else None)
         groups[_hashable_key(key)].append(record[value_idx])
+        if col_idx is not None:
+            column_values[_cache_key(record[col_idx])].append(record[value_idx])
 
     height = len(row_keys) + (3 if column_name else 2)
     width = (len(col_keys) + 2) if column_name else 2
@@ -586,15 +634,15 @@ def _render_result(
             min_col,
             f"{_AGGREGATION_LABELS[aggregation]} of {value_name}",
         )
-        ws.cell(min_row, min_col + 1, column_name)
+        _write_label(ws, min_row, min_col + 1, column_name)
         label_row = min_row + 1
-        ws.cell(label_row, min_col, row_name)
+        _write_label(ws, label_row, min_col, row_name)
         for offset, key in enumerate(col_keys, 1):
-            ws.cell(label_row, min_col + offset, _display_key(key))
+            _write_label(ws, label_row, min_col + offset, _display_key(key))
         ws.cell(label_row, min_col + len(col_keys) + 1, "Grand Total")
     else:
         label_row = min_row
-        ws.cell(min_row, min_col, row_name)
+        _write_label(ws, min_row, min_col, row_name)
         ws.cell(
             min_row,
             min_col + 1,
@@ -608,7 +656,7 @@ def _render_result(
 
     for row_offset, row_key in enumerate(row_keys, 1):
         out_row = label_row + row_offset
-        ws.cell(out_row, min_col, _display_key(row_key))
+        _write_label(ws, out_row, min_col, _display_key(row_key))
         if column_name:
             all_values = []
             for col_offset, col_key in enumerate(col_keys, 1):
@@ -625,11 +673,7 @@ def _render_result(
     if column_name:
         all_values = []
         for col_offset, col_key in enumerate(col_keys, 1):
-            values = [
-                record[value_idx]
-                for record in records
-                if _same_key(record[col_idx], col_key)
-            ]
+            values = column_values[_cache_key(col_key)]
             all_values.extend(values)
             ws.cell(total_row, min_col + col_offset, _aggregate(values, aggregation))
         ws.cell(total_row, min_col + len(col_keys) + 1, _aggregate(all_values, aggregation))
@@ -654,7 +698,27 @@ def _render_result(
 
 
 def _hashable_key(key):
-    return tuple((type(value).__name__, value) for value in key)
+    return tuple(_cache_key(value) for value in key)
+
+
+def _write_label(ws, row, col, value):
+    cell = ws.cell(row, col, value)
+    if isinstance(value, str):
+        cell.data_type = "s"
+
+
+def _destination_cell(destination):
+    if not isinstance(destination, str):
+        raise PivotBuildError("destination must be a single cell")
+    try:
+        min_col, min_row, max_col, max_row = range_boundaries(destination.replace("$", ""))
+    except ValueError as exc:
+        raise PivotBuildError(f"invalid destination: {destination}") from exc
+    if (None in (min_col, min_row, max_col, max_row)
+            or (min_col, min_row) != (max_col, max_row)
+            or not (1 <= min_col <= 16384 and 1 <= min_row <= 1048576)):
+        raise PivotBuildError("destination must be a single cell within Excel worksheet limits")
+    return min_col, min_row
 
 
 def _display_key(value):
@@ -662,11 +726,18 @@ def _display_key(value):
 
 
 def _ensure_blank(ws, min_row, min_col, height, width):
+    max_row, max_col = min_row + height - 1, min_col + width - 1
+    if max_row > 1048576 or max_col > 16384:
+        raise PivotBuildError("PivotTable output exceeds Excel worksheet limits")
+    for merged in ws.merged_cells.ranges:
+        if not (max_col < merged.min_col or min_col > merged.max_col
+                or max_row < merged.min_row or min_row > merged.max_row):
+            raise PivotBuildError(f"PivotTable output overlaps merged cells: {merged}")
     occupied = []
     for row in range(min_row, min_row + height):
         for col in range(min_col, min_col + width):
-            cell = ws.cell(row, col)
-            if cell.value is not None:
+            cell = ws._cells.get((row, col))
+            if cell is not None and cell.value is not None:
                 occupied.append(cell.coordinate)
     if occupied:
         raise PivotBuildError(

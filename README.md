@@ -89,8 +89,12 @@ pivot_sheet.add_pivot_table(
 - aggregations: `sum`, `count`, `countNums`, `average`, `min`, `max`
 - worksheet ranges only; no external, OLAP, or Data Model sources
 - no grouping, calculated fields, slicers, timelines, or PivotCharts
-- formulas in source cells are cached as their formula strings unless the
-  workbook was loaded with cached values; use literal source data for now
+- literal strings, finite numbers, booleans, and timezone-naive dates/datetimes
+- formulas and Excel error cells are rejected with a cell-specific error;
+  openpyxl does not calculate formulas. Use literal data or load an already
+  calculated workbook with `data_only=True` (missing formula caches appear blank)
+- source and target must be normal worksheets in the same workbook
+- output must fit within Excel's sheet limits and avoid occupied or merged cells
 
 ## Validation status
 
@@ -107,9 +111,17 @@ This validation is evidence for the supported example, not a general Excel
 compatibility guarantee. Broader field combinations, data types, and Excel
 versions still need coverage.
 
-Large, wide source ranges can currently take significant time to build because
-cache construction scales per source cell. Profile representative workloads
-before using the package in latency-sensitive request/response paths.
+The unreleased changes have automated regression coverage for numeric blanks,
+equivalent numeric/date grouping keys, all six aggregations, invalid inputs,
+multiple pivots, and repeated save/load cycles. These changes still need desktop
+Excel validation; the 0.2.2 validation above does not certify newer code.
+
+Cache indexing now uses keyed lookups instead of repeated scans of distinct
+values. Construction still retains all source cells/cache records in memory,
+and rendering costs grow with the number of row groups times column groups.
+Profile representative workloads before using this in a request/response path.
+See [testing and benchmarks](docs/testing.md) for the repeatable benchmark and
+the opt-in Windows/desktop Excel test.
 
 ## Project direction
 

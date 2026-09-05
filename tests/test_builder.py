@@ -53,36 +53,29 @@ class BuilderTests(unittest.TestCase):
                 self.assertIn("xl/pivotTables/pivotTable1.xml", names)
                 self.assertIn("xl/pivotCache/pivotCacheDefinition1.xml", names)
                 self.assertIn("xl/pivotCache/pivotCacheRecords1.xml", names)
-                self.assertIn(
-                    b'refreshOnLoad="1"',
-                    archive.read("xl/pivotCache/pivotCacheDefinition1.xml"),
-                )
-                self.assertIn(
-                    b'name="SalesPivot"', archive.read("xl/pivotTables/pivotTable1.xml")
-                )
-                self.assertIn(
-                    b'<location ref="A3:D7" firstHeaderRow="1" firstDataRow="2"',
-                    archive.read("xl/pivotTables/pivotTable1.xml"),
-                )
-                self.assertIn(
-                    b'name="SalesPivot" cacheId="1"',
-                    archive.read("xl/pivotTables/pivotTable1.xml"),
-                )
                 pivot_root = ElementTree.fromstring(
                     archive.read("xl/pivotTables/pivotTable1.xml")
                 )
                 namespace = {
                     "x": "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
                 }
+                self.assertEqual(pivot_root.get("name"), "SalesPivot")
+                self.assertEqual(pivot_root.get("cacheId"), "1")
+                location = pivot_root.find("x:location", namespace)
+                self.assertEqual(location.get("ref"), "A3:D7")
+                self.assertEqual(location.get("firstHeaderRow"), "1")
+                self.assertEqual(location.get("firstDataRow"), "2")
                 first_row_item = pivot_root.find("x:rowItems/x:i", namespace)
                 self.assertIsNotNone(first_row_item)
                 self.assertEqual(first_row_item.get("t"), "data")
                 first_row_index = first_row_item.find("x:x", namespace)
                 self.assertIsNotNone(first_row_index)
                 self.assertIsNone(first_row_index.get("v"))
-                cache_xml = archive.read("xl/pivotCache/pivotCacheDefinition1.xml")
-                self.assertNotIn(b'saveData=', cache_xml)
-                self.assertIn(b'<cacheField name="Region" numFmtId="0">', cache_xml)
+                cache_root = ElementTree.fromstring(archive.read("xl/pivotCache/pivotCacheDefinition1.xml"))
+                self.assertEqual(cache_root.get("refreshOnLoad"), "1")
+                self.assertNotIn("saveData", cache_root.attrib)
+                region_field = cache_root.find("x:cacheFields/x:cacheField[@name='Region']", namespace)
+                self.assertEqual(region_field.get("numFmtId"), "0")
 
             reloaded = load_workbook(output)
             self.assertEqual(len(reloaded["Pivot"]._pivots), 1)
