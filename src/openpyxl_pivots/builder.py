@@ -489,6 +489,12 @@ def _build_field_cache(values: list[Any], *, categorical: bool) -> _FieldCache:
             minDate=min(dates) if dates and not numeric else None,
             maxDate=max(dates) if dates and not numeric else None,
         )
+    if dates and numeric:
+        # Excel's native mixed date/number caches retain both <d> and <n>
+        # items, and omit numeric type flags. Numeric flags are invalid here
+        # because the field also carries date items.
+        shared_kwargs.pop("containsNumber", None)
+        shared_kwargs.pop("containsInteger", None)
     if any(isinstance(value, str) and len(value) > 255 for value in unique):
         shared_kwargs["longText"] = True
     return _FieldCache(SharedItems(**shared_kwargs), indices)

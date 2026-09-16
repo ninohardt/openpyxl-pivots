@@ -83,6 +83,28 @@ class CacheRegressionTests(unittest.TestCase):
         shared = root.find("x:cacheFields/x:cacheField/x:sharedItems", NS)
         self.assertEqual(shared.get("longText"), "1")
 
+    def test_mixed_date_number_cache_omits_numeric_flags_on_both_axes(self):
+        for number in (2, 2.5):
+            for axis in ("row", "col"):
+                for blank in (False, True):
+                    with self.subTest(number=number, axis=axis, blank=blank):
+                        rows = [(date(2025, 1, 1), "X", 10), (number, "X", 20)]
+                        if blank:
+                            rows.append((None, "X", 5))
+                        if axis == "col":
+                            rows = [(c, r, v) for r, c, v in rows]
+                        wb, _, _ = build(rows)
+                        root = archive_xml(wb, "xl/pivotCache/pivotCacheDefinition1.xml")
+                        shared = root.find(f"x:cacheFields/x:cacheField[@name='{axis}']/x:sharedItems", NS)
+                        self.assertEqual(shared.get("containsDate"), "1")
+                        self.assertEqual(shared.get("containsMixedTypes"), "1")
+                        self.assertNotIn("containsNumber", shared.attrib)
+                        self.assertNotIn("containsInteger", shared.attrib)
+                        self.assertNotIn("minValue", shared.attrib)
+                        self.assertNotIn("maxValue", shared.attrib)
+                        self.assertEqual(len(shared.findall("x:d", NS)), 1)
+                        self.assertEqual(len(shared.findall("x:n", NS)), 1)
+
     def test_distinct_cache_values_do_not_require_quadratic_comparisons(self):
         class CountedText(str):
             comparisons = 0
