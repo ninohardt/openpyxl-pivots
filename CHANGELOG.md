@@ -2,6 +2,23 @@
 
 All notable changes to this project are documented here.
 
+## Unreleased
+
+- Keep independent pivot caches distinct across repeated openpyxl save/load
+  cycles by recording per-pivot builder provenance in `refreshedBy`.
+- Use consistent numeric/date keys for both cache indexing and aggregation;
+  equivalent `int`/`float` and `date`/`datetime` labels no longer lose values.
+- Replace quadratic cache scans and repeated column-total scans with lookups.
+- Correct numeric-plus-blank cache flags, declare long text, and avoid combining
+  numeric and date bounds in mixed caches.
+- Reject malformed ranges, cross-workbook sources, merged/occupied output,
+  non-finite numbers, timezone-aware dates, formulas, and Excel errors explicitly.
+  Formula/error rejection replaces the previous conversion to cache text.
+- Preserve quoted sheet names and literal formula-like text labels.
+- Expand semantic XML, aggregation, package-relationship, and failure tests;
+  exercise both XML backends and installed distribution artifacts in CI.
+- Add an opt-in desktop Excel open/refresh/save test and synthetic benchmark.
+
 ## 0.2.2 - 2026-08-21
 
 - Route date fields containing blanks through the mixed-item cache path so the
